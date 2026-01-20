@@ -203,8 +203,7 @@ module.exports.push(
    .addSubcommand(s => s.setName("spam").addStringOption(o => o.setName("state").setDescription("on/off").setRequired(true)))
    .addSubcommand(s => s.setName("emojis").addStringOption(o => o.setName("state").setDescription("on/off").setRequired(true)))
    .addSubcommand(s => s.setName("zalgo").addStringOption(o => o.setName("state").setDescription("on/off").setRequired(true)))
-)  // <-- close the addSubcommandGroup properly
-{
+),  // <-- close the addSubcommandGroup properly
   data: new SlashCommandBuilder()
     .setName("automod-threshold")
     .setDescription("Set automod thresholds")
