@@ -242,7 +242,7 @@ module.exports.push(
     interaction.reply(`✅ Automod action for **${filter}** set to **${action}**`);
   }
 }
-);
+
 
 /* =========================
    LOGGING COMMANDS
