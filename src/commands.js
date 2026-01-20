@@ -202,7 +202,7 @@ module.exports.push(
        .addSubcommand(s => s.setName("caps").addStringOption(o => o.setName("state").setDescription("on/off").setRequired(true)))
        .addSubcommand(s => s.setName("spam").addStringOption(o => o.setName("state").setDescription("on/off").setRequired(true)))
        .addSubcommand(s => s.setName("emojis").addStringOption(o => o.setName("state").setDescription("on/off").setRequired(true)))
-       .addSubcommand(s => s.setName("zalgo").addStringOption(o => o.setName("state").setDescription("on/off").setRequired(true)))))
+       .addSubcommand(s => s.setName("zalgo").addStringOption(o => o.setName("state").setDescription("on/off").setRequired(true)))
 ,
 {
   data: new SlashCommandBuilder()
