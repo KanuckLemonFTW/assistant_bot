@@ -1,27 +1,32 @@
-const { ownerID, logChannelName } = require("./config");
 const db = require("./database");
 
 module.exports = {
-    isOwner: (id) => id === ownerID,
+  isAdmin: (member) => {
+    const roles = db.getDB().adminRoles || [];
+    return member.roles.cache.some(r => roles.includes(r.name)) || member.permissions.has("Administrator");
+  },
 
-    isAdmin: (member) => {
-        if (!member) return false;
-        return member.roles.cache.some(r => db.getDB().adminRoles.includes(r.name));
-    },
+  isOwner: (userId) => {
+    const ownerId = process.env.OWNER_ID; // your Discord ID
+    return userId === ownerId;
+  },
 
-    formatUser: (user) => `${user.tag}`,
+  logAction: (guild, message) => {
+    console.log(`[${guild.name}] ${message}`);
+    // Optionally: send to mod-log channel if set in DB
+  },
 
-    logAction: (guild, content) => {
-        const logChannel = guild.channels.cache.find(ch => ch.name === logChannelName);
-        if (logChannel) logChannel.send(content);
-    },
-
-    parseTime: (str) => {
-        if (!str) return null;
-        const match = str.match(/(\d+)(s|m|h|d)/);
-        if (!match) return null;
-        const [, num, unit] = match;
-        const multipliers = { s: 1000, m: 60*1000, h: 3600*1000, d: 86400*1000 };
-        return parseInt(num) * multipliers[unit];
+  parseTime: (str) => {
+    const regex = /(\d+)([smhd])/;
+    const match = str.match(regex);
+    if (!match) return null;
+    const value = parseInt(match[1]);
+    switch (match[2]) {
+      case "s": return value * 1000;
+      case "m": return value * 60 * 1000;
+      case "h": return value * 60 * 60 * 1000;
+      case "d": return value * 24 * 60 * 60 * 1000;
+      default: return null;
     }
+  },
 };
