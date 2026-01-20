@@ -1,18 +1,17 @@
-const db = require("./database");
-const { ownerID } = require("./config");
+const { ownerID, logChannelName } = require("./config");
 
 module.exports = {
-    isOwner: (userId) => userId === ownerID,
+    isOwner: (id) => id === ownerID,
 
     isAdmin: (member) => {
-        const adminRoles = db.getDB().adminRoles || [];
-        return member.roles.cache.some(r => adminRoles.includes(r));
+        if (!member) return false;
+        return member.roles.cache.some(r => require("./database").getDB().adminRoles.includes(r.name));
     },
 
-    formatUser: (user) => `<@${user.id}> (${user.tag})`,
+    formatUser: (user) => `${user.tag}`,
 
-    logAction: (guild, message) => {
-        const logChannel = guild.channels.cache.find(ch => ch.name === "bot-logs");
-        if (logChannel) logChannel.send(message);
+    logAction: (guild, content) => {
+        const logChannel = guild.channels.cache.find(ch => ch.name === logChannelName);
+        if (logChannel) logChannel.send(content);
     }
 };
