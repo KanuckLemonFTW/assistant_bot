@@ -15,7 +15,7 @@ module.exports = (client) => {
                 commands[commandName].execute(message, args);
             } catch (err) {
                 console.error(err);
-                message.reply("There was an error executing that command.");
+                message.reply("Error executing command.");
             }
         }
     });
