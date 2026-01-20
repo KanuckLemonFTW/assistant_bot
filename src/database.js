@@ -1,56 +1,44 @@
 const fs = require("fs");
-const { dbFile } = require("./config");
+const path = "./src/db.json";
 
-let db = {};
-if (fs.existsSync(dbFile)) {
-    db = JSON.parse(fs.readFileSync(dbFile, "utf8"));
-} else {
-    db = { bans: {}, mutes: {}, infractions: {}, automod: {}, adminRoles: [], notes: {} };
-    fs.writeFileSync(dbFile, JSON.stringify(db, null, 4));
+// Initialize file if missing
+if (!fs.existsSync(path)) fs.writeFileSync(path, JSON.stringify({ adminRoles: [], automod: {}, infractions: [] }));
+
+function readDB() {
+  return JSON.parse(fs.readFileSync(path, "utf-8"));
 }
 
-const saveDB = () => fs.writeFileSync(dbFile, JSON.stringify(db, null, 4));
+function writeDB(data) {
+  fs.writeFileSync(path, JSON.stringify(data, null, 2));
+}
 
 module.exports = {
-    getDB: () => db,
+  getDB: () => readDB(),
 
-    addBan: (userId, reason) => {
-        db.bans[userId] = { reason, date: new Date().toISOString() };
-        saveDB();
-    },
+  setAdminRoles: (roles) => {
+    const db = readDB();
+    db.adminRoles = roles;
+    writeDB(db);
+  },
 
-    removeBan: (userId) => {
-        delete db.bans[userId];
-        saveDB();
-    },
+  setAutomod: (key, value) => {
+    const db = readDB();
+    if (!db.automod) db.automod = {};
+    db.automod[key] = value;
+    writeDB(db);
+  },
 
-    addInfraction: (userId, type, reason) => {
-        if (!db.infractions[userId]) db.infractions[userId] = [];
-        db.infractions[userId].push({ type, reason, date: new Date().toISOString() });
-        saveDB();
-    },
+  addBan: (userId, reason) => {
+    const db = readDB();
+    if (!db.bans) db.bans = [];
+    db.bans.push({ userId, reason, date: Date.now() });
+    writeDB(db);
+  },
 
-    getInfractions: (userId) => db.infractions[userId] || [],
-
-    setAutomod: (filter, data) => {
-        db.automod[filter] = data;
-        saveDB();
-    },
-
-    addAdminRole: (roleName) => {
-        if (!db.adminRoles.includes(roleName)) db.adminRoles.push(roleName);
-        saveDB();
-    },
-
-    setAdminRoles: (roles) => {
-        db.adminRoles = roles;
-        saveDB();
-    },
-
-    addNote: (userId, note) => {
-        if (!db.notes[userId]) db.notes[userId] = [];
-        db.notes[userId].push({ note, date: new Date().toISOString() });
-        saveDB();
-    }
+  addInfraction: (userId, type, reason) => {
+    const db = readDB();
+    if (!db.infractions) db.infractions = [];
+    db.infractions.push({ userId, type, reason, date: Date.now() });
+    writeDB(db);
+  },
 };
-
