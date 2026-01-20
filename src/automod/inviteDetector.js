@@ -1,1 +1,0 @@
-// Invite detection logic placeholder

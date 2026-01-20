@@ -1,1 +1,0 @@
-// Bad word filter placeholder
