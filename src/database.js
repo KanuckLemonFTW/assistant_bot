@@ -1,60 +1,55 @@
 const fs = require("fs");
-const path = "./src/db.json";
+const { dbFile } = require("./config");
 
-const initDB = () => {
-    if (!fs.existsSync(path)) fs.writeFileSync(path, JSON.stringify({
-        bans: {},
-        mutes: {},
-        infractions: {},
-        automod: {},
-        adminRoles: []
-    }, null, 2));
-    return JSON.parse(fs.readFileSync(path));
-};
+let db = {};
+if (fs.existsSync(dbFile)) {
+    db = JSON.parse(fs.readFileSync(dbFile, "utf8"));
+} else {
+    db = { bans: {}, mutes: {}, infractions: {}, automod: {}, adminRoles: [], notes: {} };
+    fs.writeFileSync(dbFile, JSON.stringify(db, null, 4));
+}
 
-const saveDB = (data) => fs.writeFileSync(path, JSON.stringify(data, null, 2));
+const saveDB = () => fs.writeFileSync(dbFile, JSON.stringify(db, null, 4));
 
 module.exports = {
-    getDB: () => initDB(),
-
-    setAdminRoles: (roles) => {
-        const db = initDB();
-        db.adminRoles = roles;
-        saveDB(db);
-    },
+    getDB: () => db,
 
     addBan: (userId, reason) => {
-        const db = initDB();
-        db.bans[userId] = reason;
-        saveDB(db);
+        db.bans[userId] = { reason, date: new Date().toISOString() };
+        saveDB();
     },
 
     removeBan: (userId) => {
-        const db = initDB();
         delete db.bans[userId];
-        saveDB(db);
+        saveDB();
     },
 
     addInfraction: (userId, type, reason) => {
-        const db = initDB();
         if (!db.infractions[userId]) db.infractions[userId] = [];
         db.infractions[userId].push({ type, reason, date: new Date().toISOString() });
-        saveDB(db);
+        saveDB();
     },
 
-    getInfractions: (userId) => {
-        const db = initDB();
-        return db.infractions[userId] || [];
+    getInfractions: (userId) => db.infractions[userId] || [],
+
+    setAutomod: (filter, data) => {
+        db.automod[filter] = data;
+        saveDB();
     },
 
-    setAutomod: (filter, settings) => {
-        const db = initDB();
-        db.automod[filter] = settings;
-        saveDB(db);
+    addAdminRole: (roleName) => {
+        if (!db.adminRoles.includes(roleName)) db.adminRoles.push(roleName);
+        saveDB();
     },
 
-    getAutomod: (filter) => {
-        const db = initDB();
-        return db.automod[filter] || {};
+    setAdminRoles: (roles) => {
+        db.adminRoles = roles;
+        saveDB();
+    },
+
+    addNote: (userId, note) => {
+        if (!db.notes[userId]) db.notes[userId] = [];
+        db.notes[userId].push({ note, date: new Date().toISOString() });
+        saveDB();
     }
 };
