@@ -1,7 +1,7 @@
-module.exports = (client) => {
-    const db = require("./database");
-    const { logAction, isAdmin } = require("./utils");
+const db = require("./database");
+const { logAction, isAdmin } = require("./utils");
 
+module.exports = (client) => {
     client.on("messageCreate", async (message) => {
         if (message.author.bot) return;
 
@@ -15,7 +15,7 @@ module.exports = (client) => {
             if (letters / message.content.length * 100 > capsPercent) punish = automod.action?.caps || "warn";
         }
 
-        // BADWORDS filter
+        // BADWORDS
         if (automod.badwords && automod.badwords.enabled) {
             const badWords = ["badword1","badword2"];
             if (badWords.some(w => message.content.toLowerCase().includes(w))) punish = automod.action?.badwords || "warn";
@@ -26,16 +26,46 @@ module.exports = (client) => {
             if (/discord\.gg\/\w+/.test(message.content)) punish = automod.action?.invites || "warn";
         }
 
+        // LINKS
+        if (automod.links && automod.links.enabled) {
+            if (/https?:\/\/\S+/.test(message.content)) punish = automod.action?.links || "warn";
+        }
+
+        // EMOJIS
+        if (automod.emojis && automod.emojis.enabled) {
+            const emojiCount = (message.content.match(/<a?:\w+:\d+>/g) || []).length;
+            if (emojiCount > (automod.emoji_limit || 5)) punish = automod.action?.emojis || "warn";
+        }
+
         // Apply punishment
         if (punish && !isAdmin(message.member)) {
-            await message.delete().catch(()=>{});
+            await message.delete().catch(() => {});
             if (punish === "warn") db.addInfraction(message.author.id, "warn", "Automod triggered");
-            logAction(message.guild, `Automod punished ${message.author.tag} with ${punish}`);
+            logAction(message.guild, `Automod punished ${message.author.tag} with ${punish} for message: ${message.content}`);
         }
     });
 
     // Logging joins/leaves
     client.on("guildMemberAdd", member => logAction(member.guild, `${member.user.tag} joined.`));
     client.on("guildMemberRemove", member => logAction(member.guild, `${member.user.tag} left.`));
+
+    // Nickname changes
+    client.on("guildMemberUpdate", (oldMember, newMember) => {
+        if (oldMember.nickname !== newMember.nickname) {
+            logAction(newMember.guild, `${oldMember.user.tag} changed nickname: ${oldMember.nickname || oldMember.user.username} -> ${newMember.nickname}`);
+        }
+    });
+
+    // Role updates
+    client.on("guildMemberUpdate", (oldMember, newMember) => {
+        if (oldMember.roles.cache.size !== newMember.roles.cache.size) {
+            logAction(newMember.guild, `${newMember.user.tag} roles updated.`);
+        }
+    });
+
+    // Channel updates
+    client.on("channelUpdate", (oldChannel, newChannel) => {
+        logAction(newChannel.guild, `Channel ${oldChannel.name} updated.`);
+    });
 };
 
