@@ -1,0 +1,14 @@
+{
+  "name": "assistant-bot",
+  "version": "1.0.0",
+  "description": "Dyno-style Discord Assistant Moderation Bot",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.1",
+    "sqlite3": "^5.1.7"
+  }
+}
