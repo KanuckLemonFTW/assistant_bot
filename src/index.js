@@ -1,15 +1,22 @@
-const { Client, GatewayIntentBits } = require("discord.js");
+const { Client, GatewayIntentBits, Partials } = require("discord.js");
+const { token } = require("./config");
+const events = require("./events");
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers
-    ]
+        GatewayIntentBits.MessageContent
+    ],
+    partials: [Partials.Channel]
+});
+
+client.once("ready", () => {
+    console.log(`${client.user.tag} is online!`);
 });
 
 // Load events
-require("./events")(client);
+events(client);
 
-// Login using GitHub secret
-client.login(process.env.BOT_TOKEN);
+client.login(token);
