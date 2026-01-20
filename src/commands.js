@@ -359,3 +359,4 @@ module.exports = [
     interaction.reply({ content: "🔑 Permissions executed (placeholder)", ephemeral: true });
   }
 }
+];
