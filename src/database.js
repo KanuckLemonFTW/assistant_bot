@@ -7,7 +7,7 @@ const initDB = () => {
         mutes: {},
         infractions: {},
         automod: {},
-        adminRoles: [] // configurable via /setup-adminroles
+        adminRoles: []
     }, null, 2));
     return JSON.parse(fs.readFileSync(path));
 };
@@ -45,5 +45,16 @@ module.exports = {
     getInfractions: (userId) => {
         const db = initDB();
         return db.infractions[userId] || [];
+    },
+
+    setAutomod: (filter, settings) => {
+        const db = initDB();
+        db.automod[filter] = settings;
+        saveDB(db);
+    },
+
+    getAutomod: (filter) => {
+        const db = initDB();
+        return db.automod[filter] || {};
     }
 };
