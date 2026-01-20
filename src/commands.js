@@ -1,401 +1,523 @@
-const { isOwner, isAdmin, formatUser, logAction } = require("./utils");
+const { SlashCommandBuilder, ChannelType } = require("discord.js");
 const db = require("./database");
-const { PermissionsBitField } = require("discord.js");
+const { isAdmin, isOwner, formatUser, logAction, parseTime } = require("./utils");
 
-// Helper: parse time like "10m", "2h"
-const parseTime = (str) => {
-    if (!str) return null;
-    const match = str.match(/(\d+)(s|m|h|d)/);
-    if (!match) return null;
-    const [, num, unit] = match;
-    const multipliers = { s: 1000, m: 60*1000, h: 3600*1000, d: 86400*1000 };
-    return parseInt(num) * multipliers[unit];
-};
+module.exports = [
 
-// Helper: delete messages safely
-const safeDelete = async (msg) => {
-    try { await msg.delete(); } catch(e) {}
-};
+/* =========================
+   OWNER / SETUP COMMANDS
+========================= */
 
-// ================== COMMANDS ==================
-module.exports = {
+{
+  data: new SlashCommandBuilder()
+    .setName("setup-adminroles")
+    .setDescription("Set admin roles (owner only)")
+    .addStringOption(opt => opt.setName("roles").setDescription("Comma-separated roles").setRequired(true)),
+  async execute(interaction) {
+    if (!isOwner(interaction.user.id)) return interaction.reply({ content: "Owner only.", ephemeral: true });
+    const roles = interaction.options.getString("roles").split(",").map(r => r.trim());
+    db.setAdminRoles(roles);
+    interaction.reply({ content: `✅ Admin roles set: ${roles.join(", ")}`, ephemeral: true });
+  }
+},
 
-    // ---------------- OWNER SETUP ----------------
-    setup: {
-        description: "Owner setup command",
-        execute: (message, args) => {
-            if (!isOwner(message.author.id)) return message.reply("Owner only.");
-            message.reply(`Setup command received: ${args.join(" ")}`);
-        }
-    },
+{
+  data: new SlashCommandBuilder()
+    .setName("setup-reset")
+    .setDescription("Reset bot settings (owner only)"),
+  async execute(interaction) {
+    if (!isOwner(interaction.user.id)) return interaction.reply({ content: "Owner only.", ephemeral: true });
+    db.setAdminRoles([]);
+    db.setAutomod("caps", { enabled: false });
+    interaction.reply({ content: "⚙️ Bot settings reset.", ephemeral: true });
+  }
+},
 
-    setupAdminRoles: {
-        description: "Set admin roles (owner only)",
-        execute: (message, args) => {
-            if (!isOwner(message.author.id)) return message.reply("Owner only.");
-            if (!args.length) return message.reply("Provide role names.");
-            db.setAdminRoles(args);
-            message.reply(`Admin roles set: ${args.join(", ")}`);
-        }
-    },
+{
+  data: new SlashCommandBuilder()
+    .setName("setup-import")
+    .setDescription("Import settings (owner only)"),
+  async execute(interaction) {
+    if (!isOwner(interaction.user.id)) return interaction.reply({ content: "Owner only.", ephemeral: true });
+    interaction.reply({ content: "⚙️ Settings import placeholder.", ephemeral: true });
+  }
+},
 
-    setupAutomod: {
-        description: "Configure automod (owner)",
-        execute: (message, args) => {
-            if (!isOwner(message.author.id)) return message.reply("Owner only.");
-            const [filter, value] = args;
-            if (!filter || !value) return message.reply("Usage: /setup automod <filter> <on|off>");
-            const automod = db.getDB().automod || {};
-            automod[filter] = { enabled: value.toLowerCase() === "on" };
-            db.setAutomod(filter, automod[filter]);
-            message.reply(`Automod filter ${filter} set to ${value}`);
-        }
-    },
+{
+  data: new SlashCommandBuilder()
+    .setName("setup-export")
+    .setDescription("Export settings (owner only)"),
+  async execute(interaction) {
+    if (!isOwner(interaction.user.id)) return interaction.reply({ content: "Owner only.", ephemeral: true });
+    interaction.reply({ content: "⚙️ Settings export placeholder.", ephemeral: true });
+  }
+},
 
-    setupLogging: {
-        description: "Set logging channel",
-        execute: (message, args) => {
-            if (!isOwner(message.author.id)) return message.reply("Owner only.");
-            const channel = message.mentions.channels.first();
-            if (!channel) return message.reply("Mention a channel to log to.");
-            const dbData = db.getDB();
-            dbData.logChannel = channel.id;
-            db.setAutomod("logChannel", channel.id); // store in db
-            message.reply(`Logging channel set to ${channel}`);
-        }
-    },
+/* =========================
+   MODERATION COMMANDS
+========================= */
 
-    setupRoles: {
-        description: "Setup roles like Muted",
-        execute: async (message, args) => {
-            if (!isOwner(message.author.id)) return message.reply("Owner only.");
-            if (!args.length) return message.reply("Usage: /setup roles muted:@Muted");
-            const mutedRole = message.mentions.roles.first();
-            if (!mutedRole) return message.reply("Mention a role.");
-            const dbData = db.getDB();
-            dbData.mutedRole = mutedRole.id;
-            db.setAutomod("mutedRole", mutedRole.id);
-            message.reply(`Muted role set to ${mutedRole.name}`);
-        }
-    },
+{
+  data: new SlashCommandBuilder()
+    .setName("ban")
+    .setDescription("Ban a user")
+    .addUserOption(opt => opt.setName("user").setDescription("User to ban").setRequired(true))
+    .addStringOption(opt => opt.setName("reason").setDescription("Reason for ban"))
+    .addIntegerOption(opt => opt.setName("days").setDescription("Delete messages (days)")),
+  async execute(interaction) {
+    if (!isAdmin(interaction.member)) return interaction.reply({ content: "No permission.", ephemeral: true });
+    const user = interaction.options.getUser("user");
+    const reason = interaction.options.getString("reason") || "No reason";
+    const days = interaction.options.getInteger("days") || 0;
 
-    // ---------------- MODERATION ----------------
-    ban: {
-        description: "Ban a user",
-        execute: async (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            const user = message.mentions.members.first();
-            const reason = args.slice(1).join(" ") || "No reason provided";
-            if (!user) return message.reply("Mention a user.");
-            await user.ban({ reason });
-            db.addBan(user.id, reason);
-            logAction(message.guild, `Banned ${formatUser(user.user)}: ${reason}`);
-            message.reply(`${formatUser(user.user)} banned.`);
-        }
-    },
+    await interaction.guild.members.ban(user.id, { reason, deleteMessageDays: days });
+    db.addBan(user.id, reason);
+    logAction(interaction.guild, `🔨 ${user.tag} banned | ${reason}`);
+    interaction.reply(`✅ Banned **${user.tag}**`);
+  }
+},
 
-    softban: {
-        description: "Softban a user (ban+unban)",
-        execute: async (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            const user = message.mentions.members.first();
-            const reason = args.slice(1).join(" ") || "No reason";
-            if (!user) return message.reply("Mention a user.");
-            await user.ban({ reason });
-            await message.guild.members.unban(user.id);
-            logAction(message.guild, `Softbanned ${formatUser(user.user)}: ${reason}`);
-            message.reply(`${formatUser(user.user)} softbanned.`);
-        }
-    },
+{
+  data: new SlashCommandBuilder()
+    .setName("softban")
+    .setDescription("Softban a user (ban & unban to delete messages)")
+    .addUserOption(opt => opt.setName("user").setDescription("User to softban").setRequired(true))
+    .addStringOption(opt => opt.setName("reason").setDescription("Reason")),
+  async execute(interaction) {
+    if (!isAdmin(interaction.member)) return interaction.reply({ content: "No permission.", ephemeral: true });
+    const user = interaction.options.getUser("user");
+    const reason = interaction.options.getString("reason") || "No reason";
+    await interaction.guild.members.ban(user.id, { reason, deleteMessageDays: 7 });
+    await interaction.guild.members.unban(user.id, "Softban automatic unban");
+    logAction(interaction.guild, `⚡ ${user.tag} softbanned | ${reason}`);
+    interaction.reply(`✅ Softbanned **${user.tag}**`);
+  }
+},
 
-    hackban: {
-        description: "Ban by ID",
-        execute: async (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            const userId = args[0];
-            const reason = args.slice(1).join(" ") || "No reason";
-            if (!userId) return message.reply("Provide a user ID.");
-            await message.guild.members.ban(userId, { reason });
-            db.addBan(userId, reason);
-            logAction(message.guild, `Hackbanned ${userId}: ${reason}`);
-            message.reply(`User ${userId} banned.`);
-        }
-    },
+{
+  data: new SlashCommandBuilder()
+    .setName("kick")
+    .setDescription("Kick a user")
+    .addUserOption(opt => opt.setName("user").setDescription("User to kick").setRequired(true))
+    .addStringOption(opt => opt.setName("reason").setDescription("Reason")),
+  async execute(interaction) {
+    if (!isAdmin(interaction.member)) return interaction.reply({ content: "No permission.", ephemeral: true });
+    const member = interaction.options.getMember("user");
+    const reason = interaction.options.getString("reason") || "No reason";
+    await member.kick(reason);
+    logAction(interaction.guild, `👢 ${member.user.tag} kicked | ${reason}`);
+    interaction.reply(`✅ Kicked **${member.user.tag}**`);
+  }
+},
 
-    unban: {
-        description: "Unban a user",
-        execute: async (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            const userId = args[0];
-            if (!userId) return message.reply("Provide a user ID.");
-            await message.guild.members.unban(userId);
-            db.removeBan(userId);
-            logAction(message.guild, `Unbanned ${userId}`);
-            message.reply(`User ${userId} unbanned.`);
-        }
-    },
+{
+  data: new SlashCommandBuilder()
+    .setName("timeout")
+    .setDescription("Timeout a user")
+    .addUserOption(opt => opt.setName("user").setDescription("User to timeout").setRequired(true))
+    .addStringOption(opt => opt.setName("time").setDescription("Duration: 1m,10m,1h").setRequired(true))
+    .addStringOption(opt => opt.setName("reason").setDescription("Reason")),
+  async execute(interaction) {
+    if (!isAdmin(interaction.member)) return interaction.reply({ content: "No permission.", ephemeral: true });
+    const member = interaction.options.getMember("user");
+    const duration = parseTime(interaction.options.getString("time"));
+    const reason = interaction.options.getString("reason") || "No reason";
 
-    kick: {
-        description: "Kick a user",
-        execute: async (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            const user = message.mentions.members.first();
-            const reason = args.slice(1).join(" ") || "No reason";
-            if (!user) return message.reply("Mention a user.");
-            await user.kick(reason);
-            logAction(message.guild, `Kicked ${formatUser(user.user)}: ${reason}`);
-            message.reply(`${formatUser(user.user)} kicked.`);
-        }
-    },
+    await member.timeout(duration, reason);
+    logAction(interaction.guild, `⏱️ ${member.user.tag} timed out | ${reason}`);
+    interaction.reply(`✅ Timed out **${member.user.tag}**`);
+  }
+},
 
-    mute: {
-        description: "Mute a user",
-        execute: async (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            const user = message.mentions.members.first();
-            const time = parseTime(args[1]);
-            if (!user) return message.reply("Mention a user.");
-            let mutedRole = message.guild.roles.cache.find(r => r.name === "Muted");
-            if (!mutedRole) mutedRole = await message.guild.roles.create({ name: "Muted", permissions: [] });
-            await user.roles.add(mutedRole);
-            db.addInfraction(user.id, "mute", args[1] || "indefinite");
-            if (time) setTimeout(() => user.roles.remove(mutedRole), time);
-            logAction(message.guild, `Muted ${formatUser(user.user)} for ${args[1] || "indefinite"}`);
-            message.reply(`${formatUser(user.user)} muted.`);
-        }
-    },
+{
+  data: new SlashCommandBuilder()
+    .setName("unmute")
+    .setDescription("Remove timeout/mute from a user")
+    .addUserOption(opt => opt.setName("user").setDescription("User to unmute").setRequired(true)),
+  async execute(interaction) {
+    if (!isAdmin(interaction.member)) return interaction.reply({ content: "No permission.", ephemeral: true });
+    const member = interaction.options.getMember("user");
+    await member.timeout(null);
+    logAction(interaction.guild, `🔊 ${member.user.tag} unmuted`);
+    interaction.reply(`✅ Unmuted **${member.user.tag}**`);
+  }
+},
 
-    unmute: {
-        description: "Unmute a user",
-        execute: async (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            const user = message.mentions.members.first();
-            if (!user) return message.reply("Mention a user.");
-            const mutedRole = message.guild.roles.cache.find(r => r.name === "Muted");
-            if (mutedRole) await user.roles.remove(mutedRole);
-            logAction(message.guild, `Unmuted ${formatUser(user.user)}`);
-            message.reply(`${formatUser(user.user)} unmuted.`);
-        }
-    },
+{
+  data: new SlashCommandBuilder()
+    .setName("warn")
+    .setDescription("Warn a user")
+    .addUserOption(opt => opt.setName("user").setDescription("User to warn").setRequired(true))
+    .addStringOption(opt => opt.setName("reason").setDescription("Reason").setRequired(true)),
+  async execute(interaction) {
+    if (!isAdmin(interaction.member)) return interaction.reply({ content: "No permission.", ephemeral: true });
+    const user = interaction.options.getUser("user");
+    const reason = interaction.options.getString("reason");
 
-    timeout: {
-        description: "Timeout a user",
-        execute: async (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            const user = message.mentions.members.first();
-            const time = parseTime(args[1]);
-            if (!user || !time) return message.reply("Usage: /timeout <user> <time>");
-            await user.timeout(time);
-            db.addInfraction(user.id, "timeout", args[1]);
-            logAction(message.guild, `Timed out ${formatUser(user.user)} for ${args[1]}`);
-            message.reply(`${formatUser(user.user)} timed out for ${args[1]}`);
-        }
-    },
+    db.addInfraction(user.id, "warn", reason);
+    logAction(interaction.guild, `⚠️ ${user.tag} warned | ${reason}`);
+    interaction.reply(`⚠️ Warned **${user.tag}**`);
+  }
+},
 
-    untimeout: {
-        description: "Remove timeout",
-        execute: async (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            const user = message.mentions.members.first();
-            if (!user) return message.reply("Mention a user.");
-            await user.timeout(null);
-            logAction(message.guild, `Timeout removed for ${formatUser(user.user)}`);
-            message.reply(`${formatUser(user.user)} timeout removed.`);
-        }
-    },
+{
+  data: new SlashCommandBuilder()
+    .setName("clear")
+    .setDescription("Bulk delete messages")
+    .addIntegerOption(opt => opt.setName("amount").setDescription("Number of messages (1–100)").setRequired(true)),
+  async execute(interaction) {
+    if (!isAdmin(interaction.member)) return interaction.reply({ content: "No permission.", ephemeral: true });
+    const amount = interaction.options.getInteger("amount");
+    await interaction.channel.bulkDelete(amount, true);
+    interaction.reply({ content: `🧹 Cleared ${amount} messages`, ephemeral: true });
+  }
+}
 
-    warn: {
-        description: "Warn a user",
-        execute: (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            const user = message.mentions.members.first();
-            const reason = args.slice(1).join(" ") || "No reason";
-            if (!user) return message.reply("Mention a user.");
-            db.addInfraction(user.id, "warn", reason);
-            logAction(message.guild, `Warned ${formatUser(user.user)}: ${reason}`);
-            message.reply(`${formatUser(user.user)} warned.`);
-        }
-    },
+];
 
-    warnRemove: {
-        description: "Remove a warning",
-        execute: (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            const user = message.mentions.members.first();
-            const warnId = parseInt(args[1]);
-            if (!user || !warnId) return message.reply("Provide user and warn ID.");
-            const infractions = db.getInfractions(user.id);
-            if (!infractions[warnId-1]) return message.reply("Warning not found.");
-            infractions.splice(warnId-1, 1);
-            db.getDB().infractions[user.id] = infractions;
-            message.reply(`Removed warning ${warnId} for ${formatUser(user.user)}`);
-        }
-    },
+/* =========================
+   AUTOMOD COMMANDS
+========================= */
 
-    clear: {
-        description: "Clear messages",
-        execute: async (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            const amount = parseInt(args[0]);
-            if (!amount || amount < 1 || amount > 100) return message.reply("1-100 messages.");
-            await message.channel.bulkDelete(amount, true);
-            logAction(message.guild, `${message.author.tag} cleared ${amount} messages.`);
-            message.reply(`Deleted ${amount} messages.`).then(msg => safeDelete(msg));
-        }
-    },
+module.exports.push(
+{
+  data: new SlashCommandBuilder()
+    .setName("automod")
+    .setDescription("Automod management")
+    .addSubcommand(s =>
+      s.setName("status")
+       .setDescription("Check automod status"))
+    .addSubcommand(s =>
+      s.setName("on")
+       .setDescription("Enable automod"))
+    .addSubcommand(s =>
+      s.setName("off")
+       .setDescription("Disable automod"))
+    .addSubcommandGroup(g =>
+      g.setName("feature")
+       .setDescription("Toggle individual automod features")
+       .addSubcommand(s => s.setName("invites").addStringOption(o => o.setName("state").setDescription("on/off").setRequired(true)))
+       .addSubcommand(s => s.setName("links").addStringOption(o => o.setName("state").setDescription("on/off").setRequired(true)))
+       .addSubcommand(s => s.setName("badwords").addStringOption(o => o.setName("state").setDescription("on/off").setRequired(true)))
+       .addSubcommand(s => s.setName("caps").addStringOption(o => o.setName("state").setDescription("on/off").setRequired(true)))
+       .addSubcommand(s => s.setName("spam").addStringOption(o => o.setName("state").setDescription("on/off").setRequired(true)))
+       .addSubcommand(s => s.setName("emojis").addStringOption(o => o.setName("state").setDescription("on/off").setRequired(true)))
+       .addSubcommand(s => s.setName("zalgo").addStringOption(o => o.setName("state").setDescription("on/off").setRequired(true)))))
+,
+{
+  data: new SlashCommandBuilder()
+    .setName("automod-threshold")
+    .setDescription("Set automod thresholds")
+    .addSubcommand(s => s.setName("caps_percent").addIntegerOption(o => o.setName("value").setDescription("Percentage").setRequired(true)))
+    .addSubcommand(s => s.setName("spam_messages").addIntegerOption(o => o.setName("value").setDescription("Message count").setRequired(true)))
+    .addSubcommand(s => s.setName("spam_time").addIntegerOption(o => o.setName("value").setDescription("Seconds").setRequired(true)))
+    .addSubcommand(s => s.setName("emoji_limit").addIntegerOption(o => o.setName("value").setDescription("Emoji count").setRequired(true))),
+  async execute(interaction) {
+    if (!isAdmin(interaction.member)) return interaction.reply({ content: "No permission.", ephemeral: true });
+    const sub = interaction.options.getSubcommand();
+    const value = interaction.options.getInteger("value");
 
-    lock: {
-        description: "Lock a channel",
-        execute: async (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            const channel = message.mentions.channels.first() || message.channel;
-            await channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
-            message.reply(`${channel.name} locked.`)
-        }
-    },
+    const dbAutomod = db.getDB().automod || {};
+    dbAutomod[sub] = value;
+    db.setAutomod(sub, value);
+    interaction.reply(`🤖 Automod threshold \`${sub}\` set to \`${value}\``);
+  }
+},
+{
+  data: new SlashCommandBuilder()
+    .setName("automod-action")
+    .setDescription("Set automod punishment actions")
+    .addStringOption(opt => opt.setName("filter").setDescription("Feature (caps, spam, badwords...)").setRequired(true))
+    .addStringOption(opt => opt.setName("action").setDescription("warn, mute, kick, ban, timeout").setRequired(true)),
+  async execute(interaction) {
+    if (!isAdmin(interaction.member)) return interaction.reply({ content: "No permission.", ephemeral: true });
+    const filter = interaction.options.getString("filter");
+    const action = interaction.options.getString("action");
 
-    unlock: {
-        description: "Unlock a channel",
-        execute: async (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            const channel = message.mentions.channels.first() || message.channel;
-            await channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: true });
-            message.reply(`${channel.name} unlocked.`)
-        }
-    },
+    const dbAutomod = db.getDB().automod || {};
+    if (!dbAutomod.action) dbAutomod.action = {};
+    dbAutomod.action[filter] = action;
+    db.setAutomod("action", dbAutomod.action);
 
-    slowmode: {
-        description: "Set slowmode",
-        execute: async (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            const seconds = parseInt(args[0]);
-            if (isNaN(seconds) || seconds < 0 || seconds > 21600) return message.reply("0-21600 seconds.");
-            const channel = message.mentions.channels.first() || message.channel;
-            await channel.setRateLimitPerUser(seconds);
-            message.reply(`${channel.name} slowmode set to ${seconds}s.`);
-        }
-    },
+    interaction.reply(`✅ Automod action for **${filter}** set to **${action}**`);
+  }
+}
+);
 
-    // ---------------- AUTOMOD ----------------
-    automod: {
-        description: "Automod commands",
-        execute: (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            message.reply(`Automod command: ${args.join(" ")}`);
-        }
-    },
+/* =========================
+   LOGGING COMMANDS
+========================= */
 
-    // ---------------- LOGGING ----------------
-    logs: {
-        description: "Logging commands",
-        execute: (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            message.reply(`Logs command: ${args.join(" ")}`);
-        }
-    },
+module.exports.push(
+{
+  data: new SlashCommandBuilder()
+    .setName("logs")
+    .setDescription("Manage logging system")
+    .addSubcommand(s =>
+      s.setName("set")
+       .setDescription("Set logging channel")
+       .addChannelOption(o => o.setName("channel").setDescription("Channel").setRequired(true).addChannelTypes(ChannelType.GuildText)))
+    .addSubcommand(s =>
+      s.setName("enable")
+       .setDescription("Enable logging for a type")
+       .addStringOption(o => o.setName("type").setDescription("Type: moderation, automod, joins, leaves").setRequired(true)))
+    .addSubcommand(s =>
+      s.setName("disable")
+       .setDescription("Disable logging for a type")
+       .addStringOption(o => o.setName("type").setDescription("Type: moderation, automod, joins, leaves").setRequired(true)))
+    .addSubcommand(s =>
+      s.setName("status")
+       .setDescription("Check logging status"))
+    .addSubcommand(s =>
+      s.setName("export")
+       .setDescription("Export logs")),
+  async execute(interaction) {
+    if (!isAdmin(interaction.member)) return interaction.reply({ content: "No permission.", ephemeral: true });
+    const sub = interaction.options.getSubcommand();
+    const dbLogs = db.getDB().logs || {};
 
-    // ---------------- SECURITY ----------------
-    antinuke: {
-        description: "Antinuke commands",
-        execute: (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            message.reply(`Antinuke command: ${args.join(" ")}`);
-        }
-    },
-
-    antiraid: {
-        description: "Antiraid commands",
-        execute: (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            message.reply(`Antiraid command: ${args.join(" ")}`);
-        }
-    },
-
-    altcheck: {
-        description: "Altcheck a user",
-        execute: (message, args) => message.reply(`Altcheck: ${args.join(" ")}`)
-    },
-
-    accountage: {
-        description: "Check account age",
-        execute: (message, args) => message.reply(`Account age: ${args.join(" ")}`)
-    },
-
-    nick: {
-        description: "Change nickname",
-        execute: async (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            const user = message.mentions.members.first();
-            const newNick = args.slice(1).join(" ");
-            if (!user || !newNick) return message.reply("Provide user and nickname.");
-            await user.setNickname(newNick);
-            message.reply(`Nickname of ${formatUser(user.user)} changed to ${newNick}`);
-        }
-    },
-
-    resetnick: {
-        description: "Reset nickname",
-        execute: async (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            const user = message.mentions.members.first();
-            if (!user) return message.reply("Mention a user.");
-            await user.setNickname(null);
-            message.reply(`Nickname of ${formatUser(user.user)} reset.`);
-        }
-    },
-
-    roles: {
-        description: "Add or remove roles",
-        execute: async (message, args) => {
-            if (!isAdmin(message.member)) return message.reply("No permission.");
-            const user = message.mentions.members.first();
-            const roleName = args.slice(2).join(" ");
-            if (!user || !roleName) return message.reply("Provide user and role.");
-            const role = message.guild.roles.cache.find(r => r.name === roleName);
-            if (!role) return message.reply("Role not found.");
-            if (args[0] === "add") await user.roles.add(role);
-            if (args[0] === "remove") await user.roles.remove(role);
-            message.reply(`${args[0]}ed role ${roleName} for ${formatUser(user.user)}`);
-        }
-    },
-
-    history: {
-        description: "Show user history",
-        execute: (message, args) => message.reply(`History: ${args.join(" ")}`)
-    },
-
-    notesAdd: {
-        description: "Add note to user",
-        execute: (message, args) => message.reply(`Note added: ${args.join(" ")}`)
-    },
-
-    // ---------------- PERMISSIONS ----------------
-    permissionsSet: {
-        description: "Set command permissions",
-        execute: (message, args) => {
-            if (!isOwner(message.author.id)) return message.reply("Owner only.");
-            message.reply(`Permissions set: ${args.join(" ")}`);
-        }
-    },
-
-    permissionsDeny: {
-        description: "Deny command permissions",
-        execute: (message, args) => {
-            if (!isOwner(message.author.id)) return message.reply("Owner only.");
-            message.reply(`Permissions deny: ${args.join(" ")}`);
-        }
-    },
-
-    permissionsList: {
-        description: "List command permissions",
-        execute: (message) => message.reply("Permissions list.")
-    },
-
-    help: {
-        description: "List all commands",
-        execute: (message) => {
-            const commands = Object.keys(module.exports).map(c => `**${c}**: ${module.exports[c].description}`);
-            message.channel.send("Available Commands:\n" + commands.join("\n"));
-        }
+    switch(sub) {
+      case "set":
+        const channel = interaction.options.getChannel("channel");
+        dbLogs.channel = channel.id;
+        db.getDB().logs = dbLogs;
+        interaction.reply(`📜 Logs channel set to ${channel}`);
+        break;
+      case "enable":
+      case "disable":
+        const type = interaction.options.getString("type");
+        if(!dbLogs.types) dbLogs.types = {};
+        dbLogs.types[type] = sub === "enable";
+        db.getDB().logs = dbLogs;
+        interaction.reply(`📜 Logging for \`${type}\` ${sub === "enable" ? "enabled" : "disabled"}`);
+        break;
+      case "status":
+        interaction.reply({ content: `📜 Logging status:\n${JSON.stringify(dbLogs, null, 2)}`, ephemeral: true });
+        break;
+      case "export":
+        interaction.reply({ content: "📜 Logs export placeholder.", ephemeral: true });
+        break;
     }
-};
+  }
+}
+);
+
+/* =========================
+   ROLE MANAGEMENT
+========================= */
+
+module.exports.push(
+{
+  data: new SlashCommandBuilder()
+    .setName("roles")
+    .setDescription("Add or remove roles")
+    .addSubcommand(s =>
+      s.setName("add")
+       .setDescription("Add a role to a user")
+       .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
+       .addRoleOption(o => o.setName("role").setDescription("Role").setRequired(true)))
+    .addSubcommand(s =>
+      s.setName("remove")
+       .setDescription("Remove a role from a user")
+       .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
+       .addRoleOption(o => o.setName("role").setDescription("Role").setRequired(true))),
+  async execute(interaction) {
+    if (!isAdmin(interaction.member)) return interaction.reply({ content: "No permission.", ephemeral: true });
+    const member = interaction.options.getMember("user");
+    const role = interaction.options.getRole("role");
+    const sub = interaction.options.getSubcommand();
+
+    if(sub === "add") await member.roles.add(role);
+    else await member.roles.remove(role);
+
+    logAction(interaction.guild, `🎭 Role ${sub}ed: ${role.name} -> ${member.user.tag}`);
+    interaction.reply(`✅ Role ${sub}ed for **${member.user.tag}**`);
+  }
+}
+);
+
+/* =========================
+   SECURITY / ANTI-ABUSE
+========================= */
+
+module.exports.push(
+{
+  data: new SlashCommandBuilder()
+    .setName("antinuke")
+    .setDescription("Enable or disable antinuke protection")
+    .addStringOption(o => o.setName("state").setDescription("on/off").setRequired(true))
+    .addStringOption(o => o.setName("whitelist").setDescription("Comma-separated user/role IDs")),
+  async execute(interaction) {
+    if (!isAdmin(interaction.member)) return interaction.reply({ content: "No permission.", ephemeral: true });
+    const state = interaction.options.getString("state") === "on";
+    const whitelist = interaction.options.getString("whitelist")?.split(",").map(s => s.trim()) || [];
+    const dbSec = db.getDB().security || {};
+    dbSec.antinuke = { enabled: state, whitelist };
+    db.getDB().security = dbSec;
+    interaction.reply(`🛡️ Antinuke ${state ? "enabled" : "disabled"} | Whitelist: ${whitelist.join(", ")}`);
+  }
+},
+{
+  data: new SlashCommandBuilder()
+    .setName("antiraid")
+    .setDescription("Configure antiraid protection")
+    .addSubcommand(s => s.setName("on").setDescription("Enable antiraid"))
+    .addSubcommand(s => s.setName("off").setDescription("Disable antiraid"))
+    .addSubcommand(s => s.setName("threshold").addIntegerOption(o => o.setName("joins").setDescription("Number of joins threshold").setRequired(true)))
+    .addSubcommand(s => s.setName("lock").setDescription("Lock the server temporarily")),
+  async execute(interaction) {
+    if (!isAdmin(interaction.member)) return interaction.reply({ content: "No permission.", ephemeral: true });
+    const sub = interaction.options.getSubcommand();
+    const dbSec = db.getDB().security || {};
+    db.getDB().security = dbSec;
+
+    switch(sub) {
+      case "on": dbSec.antiraidEnabled = true; break;
+      case "off": dbSec.antiraidEnabled = false; break;
+      case "threshold": dbSec.antiraidThreshold = interaction.options.getInteger("joins"); break;
+      case "lock": dbSec.locked = true; break;
+    }
+    interaction.reply(`🛡️ Antiraid updated: ${sub}`);
+  }
+},
+{
+  data: new SlashCommandBuilder()
+    .setName("antiinviter")
+    .setDescription("Enable/disable antiinviter protection")
+    .addStringOption(o => o.setName("state").setDescription("on/off").setRequired(true))
+    .addStringOption(o => o.setName("punishment").setDescription("mute/kick/ban")),
+  async execute(interaction) {
+    if (!isAdmin(interaction.member)) return interaction.reply({ content: "No permission.", ephemeral: true });
+    const state = interaction.options.getString("state") === "on";
+    const punishment = interaction.options.getString("punishment");
+    const dbSec = db.getDB().security || {};
+    dbSec.antiinviter = { enabled: state, punishment };
+    db.getDB().security = dbSec;
+    interaction.reply(`🚫 Anti-inviter ${state ? "enabled" : "disabled"} | Punishment: ${punishment || "none"}`);
+  }
+},
+{
+  data: new SlashCommandBuilder()
+    .setName("altcheck")
+    .setDescription("Check if a user is an alt")
+    .addUserOption(o => o.setName("user").setDescription("User to check").setRequired(true)),
+  async execute(interaction) {
+    const user = interaction.options.getUser("user");
+    interaction.reply({ content: `🔍 Alt check placeholder for **${user.tag}**`, ephemeral: true });
+  }
+},
+{
+  data: new SlashCommandBuilder()
+    .setName("accountage")
+    .setDescription("Check account age of a user")
+    .addUserOption(o => o.setName("user").setDescription("User to check").setRequired(true)),
+  async execute(interaction) {
+    const user = interaction.options.getUser("user");
+    const created = user.createdAt;
+    interaction.reply({ content: `📅 **${user.tag}** account created: ${created.toUTCString()}`, ephemeral: true });
+  }
+},
+{
+  data: new SlashCommandBuilder()
+    .setName("nick")
+    .setDescription("Change nickname of a user")
+    .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
+    .addStringOption(o => o.setName("newnick").setDescription("New nickname").setRequired(true)),
+  async execute(interaction) {
+    if (!isAdmin(interaction.member)) return interaction.reply({ content: "No permission.", ephemeral: true });
+    const member = interaction.options.getMember("user");
+    const newnick = interaction.options.getString("newnick");
+    await member.setNickname(newnick);
+    logAction(interaction.guild, `✏️ Nick changed: ${member.user.tag} -> ${newnick}`);
+    interaction.reply(`✅ Nickname updated for **${member.user.tag}**`);
+  }
+},
+{
+  data: new SlashCommandBuilder()
+    .setName("resetnick")
+    .setDescription("Reset nickname of a user")
+    .addUserOption(o => o.setName("user").setDescription("User").setRequired(true)),
+  async execute(interaction) {
+    if (!isAdmin(interaction.member)) return interaction.reply({ content: "No permission.", ephemeral: true });
+    const member = interaction.options.getMember("user");
+    await member.setNickname(null);
+    logAction(interaction.guild, `🔄 Nick reset: ${member.user.tag}`);
+    interaction.reply(`✅ Nickname reset for **${member.user.tag}**`);
+  }
+},
+{
+  data: new SlashCommandBuilder()
+    .setName("history")
+    .setDescription("View user infraction history")
+    .addUserOption(o => o.setName("user").setDescription("User to check").setRequired(true)),
+  async execute(interaction) {
+    const user = interaction.options.getUser("user");
+    const infractions = db.getInfractions(user.id);
+    interaction.reply({ content: `📜 Infractions for **${user.tag}**:\n${infractions.map(i => `${i.type}: ${i.reason} (${i.date})`).join("\n") || "None"}`, ephemeral: true });
+  }
+},
+{
+  data: new SlashCommandBuilder()
+    .setName("notes")
+    .setDescription("Add a note to a user")
+    .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
+    .addStringOption(o => o.setName("note").setDescription("Note").setRequired(true)),
+  async execute(interaction) {
+    if (!isAdmin(interaction.member)) return interaction.reply({ content: "No permission.", ephemeral: true });
+    const user = interaction.options.getUser("user");
+    const note = interaction.options.getString("note");
+    db.addNote(user.id, note);
+    logAction(interaction.guild, `📝 Note added for ${user.tag}: ${note}`);
+    interaction.reply(`✅ Note added for **${user.tag}**`);
+  }
+}
+);
+
+/* =========================
+   PERMISSIONS SYSTEM
+========================= */
+
+module.exports.push(
+{
+  data: new SlashCommandBuilder()
+    .setName("permissions")
+    .setDescription("Manage command permissions")
+    .addSubcommand(s => s.setName("set")
+      .setDescription("Allow a role to use a command")
+      .addStringOption(o => o.setName("command").setDescription("Command name").setRequired(true))
+      .addRoleOption(o => o.setName("role").setDescription("Role to allow").setRequired(true)))
+    .addSubcommand(s => s.setName("deny")
+      .setDescription("Deny a role from using a command")
+      .addStringOption(o => o.setName("command").setDescription("Command name").setRequired(true))
+      .addRoleOption(o => o.setName("role").setDescription("Role to deny").setRequired(true)))
+    .addSubcommand(s => s.setName("list").setDescription("List all command permissions")),
+  async execute(interaction) {
+    if (!isOwner(interaction.user.id)) return interaction.reply({ content: "Owner only.", ephemeral: true });
+
+    const sub = interaction.options.getSubcommand();
+    const cmd = interaction.options.getString("command");
+    const role = interaction.options.getRole("role");
+
+    switch(sub) {
+      case "set":
+        db.setCommandPermission(cmd, role.id, true);
+        interaction.reply(`🔐 Allowed **${role.name}** to use \`${cmd}\``);
+        break;
+      case "deny":
+        db.setCommandPermission(cmd, role.id, false);
+        interaction.reply(`🔒 Denied **${role.name}** from using \`${cmd}\``);
+        break;
+      case "list":
+        const list = db.getCommandPermissions();
+        interaction.reply({ content: `📜 Command permissions:\n${JSON.stringify(list, null, 2)}`, ephemeral: true });
+        break;
+    }
+  }
+}
+);
+
+/* =========================
+   END OF COMMANDS.JS
+========================= */
+
+console.log("✅ All commands loaded.");
